@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ShareScreen — Meet Style</title>
+  <script src="/socket.io/socket.io.js"></script>
+<script>
+  const socket = io(); // agar same server se serve ho rahi hai file
+</script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root{
+      --bg1:#0f172a; --card:#0b1220; --muted:#94a3b8; --text:#e2e8f0;
+      --brand:#7c3aed; --brand2:#6366f1; --danger:#ef4444; --ok:#22c55e; --warn:#f59e0b;
+    }
+    body{
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Inter, Arial, sans-serif;
+      background: linear-gradient(135deg,#1e293b 0%,#0f172a 100%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* === App shell (Meet-like) === */
+    .app {
+      display: grid;
+      grid-template-columns: 1fr 320px; /* main + right people panel */
+      grid-template-rows: auto 1fr auto; /* topbar, content, footer controls */
+      gap: 0;
+      min-height: 100vh;
+    }
+
+    .topbar{
+      grid-column: 1 / -1;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 16px;
+      background: rgba(2,6,23,0.75);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid rgba(148,163,184,0.15);
+      position: sticky; top: 0; z-index: 5;
+    }
+    .brand{
+      display:flex; align-items:center; gap:10px; font-weight:700;
+    }
+    .brand .dot{ width:10px; height:10px; border-radius:50%; background: var(--ok); }
+    .meet-info{ font-size: 14px; color: var(--muted); }
+    .top-actions{ display:flex; gap:8px; }
+    .btn{
+      background: rgba(148,163,184,0.12);
+      color: var(--text);
+      border: 1px solid rgba(148,163,184,0.2);
+      padding: 8px 12px; border-radius: 10px; cursor: pointer; font-weight:600;
+    }
+    .btn:hover{ background: rgba(148,163,184,0.2); }
+    .btn.primary{ background: linear-gradient(135deg,var(--brand),var(--brand2)); border: none; }
+    .btn.danger{ background: linear-gradient(135deg,#ef4444,#dc2626); border: none; }
+    .btn.icon{ width:42px; height:42px; display:grid; place-items:center; border-radius:12px; }
+    .badge{ padding: 4px 8px; border-radius: 999px; background: rgba(124,58,237,0.2); border:1px solid rgba(124,58,237,0.35); font-size:12px; }
+
+    /* Main stage (video area) */
+    .stage{
+      grid-column: 1 / 2;
+      display:flex; align-items:center; justify-content:center;
+      padding: 16px;
+    }
+    .video-wrap{
+      width: 100%; height: 100%;
+      background: #000; border-radius: 16px; position: relative; overflow: hidden;
+      border: 1px solid rgba(148,163,184,0.15);
+    }
+    .placeholder{
+      position:absolute; inset:0; display:grid; place-items:center; color:#94a3b8; text-align:center; padding:20px;
+    }
+    .placeholder .icon{ font-size: 56px; opacity: 0.6; margin-bottom: 8px; }
+
+    video{
+      width: 100%; height: 100%; object-fit: contain; background:#000; display:none;
+    }
+
+    /* Bottom control bar (Meet style) */
+    .controls{
+      grid-column: 1 / 2;
+      display:flex; align-items:center; justify-content:center;
+      gap: 8px; padding: 12px 16px;
+      background: rgba(2,6,23,0.6);
+      border-top: 1px solid rgba(148,163,184,0.12);
+      position: sticky; bottom: 0; z-index: 5;
+    }
+    .controls .group{
+      display:flex; gap:8px; background: rgba(148,163,184,0.12);
+      padding:8px; border-radius: 999px; border:1px solid rgba(148,163,184,0.2);
+    }
+    .controls .btn { border-radius: 999px; }
+    .controls .btn.danger{ padding-inline: 18px; }
+
+    /* Right panel (People) */
+    .right{
+      grid-column: 2 / 3; grid-row: 2 / -1;
+      border-left: 1px solid rgba(148,163,184,0.15);
+      background: rgba(2,6,23,0.55);
+      backdrop-filter: blur(8px);
+      display:flex; flex-direction: column;
+      min-height: 0;
+    }
+    .right .pane-header{
+      padding: 12px 14px; border-bottom: 1px solid rgba(148,163,184,0.12); font-weight:700;
+      display:flex; align-items:center; justify-content:space-between;
+    }
+    .users-list{
+      flex:1; overflow-y:auto; padding: 8px;
+    }
+    .user-item{
+      display:flex; align-items:center; gap:10px; padding:10px 8px; border-bottom:1px solid rgba(148,163,184,0.08);
+    }
+    .user-avatar{ width:32px; height:32px; border-radius:50%; display:grid; place-items:center;
+      background: linear-gradient(135deg,#667eea,#764ba2); color:#fff; font-weight:700; }
+    .user-info .user-name{ font-weight:600; }
+    .user-status{ font-size:12px; color: var(--muted); }
+    .status-indicator{ width:8px; height:8px; border-radius:50%; margin-left:auto; }
+    .status-online{ background: var(--ok); }
+    .status-sharing{ background: var(--warn); animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+    /* Meet-like in-page “fullscreen” (stage expands, right panel hides) */
+    .stage-full {
+      grid-column: 1 / -1;
+    }
+    .video-wrap.full {
+      position: fixed; inset: 56px 0 64px 0; /* leave space for topbar & controls */
+      border-radius: 0; z-index: 10;
+    }
+
+    /* Popup */
+    #popup-backdrop{ display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1000;}
+    #popup{ display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+      background:#0b1220; color:var(--text); padding:24px; border-radius:16px; border:1px solid rgba(148,163,184,0.2); z-index:1001; width:90%; max-width:400px; text-align:center; }
+
+    /* Mobile */
+    @media (max-width: 1024px){
+      .app{ grid-template-columns: 1fr; grid-template-rows: auto 1fr auto auto; }
+      .right{ grid-column: 1 / -1; grid-row: 4 / 5; min-height: 240px; }
+      .video-wrap.full{ inset: 56px 0 120px 0; }
+    }
+
+    /* Hide native controls on remote video (as in your code) */
+    video::-webkit-media-controls,
+    video::-webkit-media-controls-enclosure,
+    video::-webkit-media-controls-panel { display:none !important; }
+  </style>
+</head>
+
+<body>
+  <div class="app" id="app">
+    <!-- Top Bar -->
+    <div class="topbar">
+      <div class="brand">
+        <span class="dot" id="connDot"></span>
+        <span>ShareScreen</span>
+        <span class="badge" id="roomBadge">No room</span>
+      </div>
+      <div class="meet-info" id="statusMessage">Not connected</div>
+      <div class="top-actions">
+        <button class="btn" id="openSettingsBtn">Details</button>
+        <button class="btn primary" id="requestBtn">Request screen</button>
+        <button class="btn danger" id="stopBtn" style="display:none;">Stop</button>
+      </div>
+    </div>
+
+    <!-- Stage (video) -->
+    <div class="stage" id="stage">
+      <div class="video-wrap" id="videoContainer">
+        <div class="placeholder" id="ph">
+          <div>
+            <div class="icon">🖥️</div>
+            <p>No screen being shared</p>
+            <small>Request screen sharing to view content</small>
+          </div>
+        </div>
+        <video id="remoteVideo" autoplay playsinline></video>
+
+        <!-- floating controls over video (only fullscreen toggle here) -->
+        <div style="position:absolute; right:12px; bottom:12px; display:flex; gap:8px;">
+          <button class="btn icon" id="fullscreenBtn" title="Fit to window / Exit">⛶</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Controls -->
+    <div class="controls">
+      <div class="group">
+        <input id="roomId" placeholder="Room ID" class="btn" style="width:150px;">
+        <input id="userName" placeholder="Your name" class="btn" style="width:160px;">
+      </div>
+      <div class="group">
+        <button class="btn icon" id="joinBtn" title="Join Room">➕</button>
+      </div>
+      
+      <div class="group">
+        <button class="btn danger" id="leaveFake" title="Leave (UI only)">Leave</button>
+      </div>
+    </div>
+
+    <!-- Right: People -->
+    <aside class="right" id="peoplePane">
+      <div class="pane-header">
+        <span>People</span>
+        <button class="btn icon" id="togglePeople">▸</button>
+      </div>
+      <div class="users-list" id="usersList">
+        <div style="padding:16px; color:#94a3b8;">No users connected</div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Popup -->
+  <div id="popup-backdrop"></div>
+  <div id="popup">
+    <div style="font-size:3rem; margin-bottom:16px;">📺</div>
+    <h3 style="margin-bottom:8px;">Screen Share Request</h3>
+    <p id="popupMessage" style="color:#94a3b8; margin-bottom:18px;">Someone wants to view your screen</p>
+    <div style="display:flex; gap:10px; justify-content:center;">
+      <button id="acceptBtn" class="btn primary">Accept</button>
+      <button id="rejectBtn" class="btn danger">Decline</button>
+    </div>
+  </div>
+
+  <script>
+  
+
+
+
+ document.getElementById("leaveFake").addEventListener("click",()=>{
+    window.location.reload()
+   
+  })
+
+   document.addEventListener("keydown", function(event) {
+      if (event.key === "Escape") {
+        fullscreenBtn.click()
+      }
+    });
+
+
+    let localStream, peerConnection, roomId, viewerId, userName;
+    let isSharingActive = false;
+    let connectedUsers = new Map();
+
+    // Elements (kept your original IDs where needed)
+    const elements = {
+      roomIdInput: document.getElementById("roomId"),
+      userNameInput: document.getElementById("userName"),
+      joinBtn: document.getElementById("joinBtn"),
+      requestBtn: document.getElementById("requestBtn"),
+      stopBtn: document.getElementById("stopBtn"),
+      popup: document.getElementById("popup"),
+      popupBackdrop: document.getElementById("popup-backdrop"),
+      acceptBtn: document.getElementById("acceptBtn"),
+      rejectBtn: document.getElementById("rejectBtn"),
+      remoteVideo: document.getElementById("remoteVideo"),
+      videoContainer: document.getElementById("videoContainer"),
+      statusMessage: document.getElementById("statusMessage"),
+      usersList: document.getElementById("usersList"),
+      popupMessage: document.getElementById("popupMessage"),
+      fullscreenBtn: document.getElementById("fullscreenBtn"),
+      connDot: document.getElementById("connDot"),
+      roomBadge: document.getElementById("roomBadge"),
+      stage: document.getElementById("stage"),
+      peoplePane: document.getElementById("peoplePane"),
+      togglePeople: document.getElementById("togglePeople"),
+      openSettingsBtn: document.getElementById("openSettingsBtn"),
+    };
+
+    function showPopup(){ elements.popup.style.display="block"; elements.popupBackdrop.style.display="block"; }
+    function hidePopup(){ elements.popup.style.display="none"; elements.popupBackdrop.style.display="none"; }
+
+    function setConnState(type){
+      elements.connDot.style.background = type === 'connected' ? "#22c55e" :
+                                         type === 'connecting' ? "#f59e0b" : "#ef4444";
+    }
+    function updateStatus(message, type='info'){
+      elements.statusMessage.textContent = message;
+      if(type==='connected'||type==='connecting'||type==='disconnected') setConnState(type);
+    }
+    function updateRoomBadge(){
+      elements.roomBadge.textContent = roomId ? `Room: ${roomId}` : 'No room';
+    }
+
+    function updateUsersList(){
+      const list = elements.usersList;
+      if(connectedUsers.size===0){
+        list.innerHTML = `<div style="padding:16px; color:#94a3b8;">No users connected</div>`;
+        return;
+      }
+      let html = '';
+      connectedUsers.forEach((user)=>{
+        const initials = user.name ? user.name.split(' ').map(n=>n[0]).join('').toUpperCase() : 'U';
+        const statusClass = user.isSharing ? 'status-sharing' : 'status-online';
+        const statusText = user.isSharing ? 'Sharing screen' : 'Online';
+        html += `
+          <div class="user-item">
+            <div class="user-avatar">${initials}</div>
+            <div class="user-info">
+              <div class="user-name">${user.name || 'Anonymous'}</div>
+              <div class="user-status">${statusText}</div>
+            </div>
+            <div class="status-indicator ${statusClass}"></div>
+          </div>`;
+      });
+      list.innerHTML = html;
+    }
+
+    function showVideoPlaceholder(){
+      document.getElementById('ph').style.display = 'grid';
+      elements.remoteVideo.style.display = 'none';
+    }
+    function showVideo(){
+      document.getElementById('ph').style.display = 'none';
+      elements.remoteVideo.style.display = 'block';
+    }
+
+    // Join
+    elements.joinBtn.onclick = () => {
+      roomId = elements.roomIdInput.value.trim();
+      userName = elements.userNameInput.value.trim() || 'Anonymous';
+      if(!roomId){ alert("Please enter a room ID!"); return; }
+      socket.emit("join-room", { roomId, userName });
+      updateStatus("Connecting to room...", 'connecting');
+      updateRoomBadge();
+    };
+
+    // Request screen
+    elements.requestBtn.onclick = () => {
+      if(!roomId){ alert("Join a room first!"); return; }
+      if(isSharingActive){ alert("Someone is already sharing. Please wait."); return; }
+      socket.emit("request-screen", roomId);
+      updateStatus("Requesting screen share...", 'connecting');
+    };
+
+    // Accept/Reject
+    elements.acceptBtn.onclick = async () => {
+      hidePopup();
+      socket.emit("screen-response", { to: viewerId, accept: true });
+      isSharingActive = true;
+      elements.stopBtn.style.display = "inline-flex";
+      try{
+        localStream = await navigator.mediaDevices.getDisplayMedia({
+          video: { mediaSource: 'screen' }, audio: true
+        });
+        peerConnection = createPeerConnection(viewerId);
+        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        socket.emit("offer", { to: viewerId, sdp: offer });
+
+        updateStatus("Sharing your screen", 'connected');
+
+        localStream.getVideoTracks()[0].addEventListener('ended', () => { stopSharing(); });
+      }catch(err){
+        console.error(err);
+        alert("Failed to start screen sharing.");
+        isSharingActive = false;
+        elements.stopBtn.style.display = "none";
+      }
+    };
+    elements.rejectBtn.onclick = () => { hidePopup(); socket.emit("screen-response", { to: viewerId, accept: false }); };
+    elements.stopBtn.onclick = () => { stopSharing(); };
+
+    function stopSharing(){
+      if(localStream){ localStream.getTracks().forEach(t=>t.stop()); localStream=null; }
+      if(peerConnection){ peerConnection.close(); peerConnection=null; }
+      elements.stopBtn.style.display="none";
+      isSharingActive=false;
+      if(roomId) socket.emit("stop-sharing", roomId);
+      updateStatus(roomId?`Connected to room: ${roomId}`:"Not connected",'connected');
+      showVideoPlaceholder();
+    }
+
+    // Fullscreen (Meet-style: stage expands, people panel hides; NOT browser-fullscreen)
+    let isStageFull = false;
+    elements.fullscreenBtn.onclick = () => {
+      const app = document.getElementById('app');
+      const wrap = elements.videoContainer;
+      if(!isStageFull){
+        app.classList.add('stage-full');
+        wrap.classList.add('full');
+        document.getElementById('peoplePane').style.display='none';
+        elements.fullscreenBtn.textContent = "❌";
+        isStageFull = true;
+      }else{
+        app.classList.remove('stage-full');
+        wrap.classList.remove('full');
+        document.getElementById('peoplePane').style.display='';
+        elements.fullscreenBtn.textContent = "⛶";
+        isStageFull = false;
+      }
+    };
+
+    // People panel collapse
+    elements.togglePeople.onclick = () => {
+      const pane = elements.peoplePane;
+      pane.style.display = (pane.style.display==='none') ? '' : 'none';
+    };
+
+    // Fake details (opens a small alert with current inputs)
+    elements.openSettingsBtn.onclick = () => {
+      alert(`Room: ${elements.roomIdInput.value || '—'}\nName: ${elements.userNameInput.value || '—'}`);
+    };
+
+    // Sockets
+    socket.on("room-joined", (data) => {
+      updateStatus(`Connected to room: ${roomId}`, 'connected');
+      connectedUsers.clear();
+      if(data.users){ data.users.forEach(u => connectedUsers.set(u.id,u)); }
+      updateUsersList(); updateRoomBadge();
+    });
+    socket.on("user-joined", (user) => { connectedUsers.set(user.id,user); updateUsersList(); });
+    socket.on("user-left", (id) => { connectedUsers.delete(id); updateUsersList(); });
+    socket.on("users-update", (users) => { connectedUsers.clear(); users.forEach(u=>connectedUsers.set(u.id,u)); updateUsersList(); });
+
+    socket.on("screen-request", (data) => {
+      viewerId = data.from;
+      const name = connectedUsers.get(data.from)?.name || 'Someone';
+      elements.popupMessage.textContent = `${name} wants to view your screen`;
+      showPopup();
+    });
+    socket.on("screen-response", (data) => {
+      if(!data.accept){
+        alert("Screen share request was declined.");
+        updateStatus(roomId?`Connected to room: ${roomId}`:'Connected','connected');
+      }else{
+        updateStatus("Screen share accepted. Connecting...", 'connecting');
+        isSharingActive = true;
+      }
+    });
+
+    socket.on("offer", async (data) => {
+      peerConnection = createPeerConnection(data.from);
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+      const answer = await peerConnection.createAnswer();
+      await peerConnection.setLocalDescription(answer);
+      socket.emit("answer", { to: data.from, sdp: answer });
+    });
+    socket.on("answer", async (data) => {
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+      updateStatus("Screen sharing active", 'connected');
+    });
+    socket.on("candidate", async (data) => {
+      if(peerConnection && peerConnection.remoteDescription){
+        try{ await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate)); }catch(e){ console.error(e); }
+      }
+    });
+    socket.on("stopped", () => {
+      showVideoPlaceholder();
+      updateStatus(roomId?`Connected to room: ${roomId}`:'Connected','connected');
+      isSharingActive=false;
+    });
+    socket.on("disconnect", () => {
+      updateStatus("Disconnected from server", 'disconnected');
+      connectedUsers.clear(); updateUsersList(); showVideoPlaceholder(); updateRoomBadge();
+    });
+
+    function createPeerConnection(remoteId){
+      const pc = new RTCPeerConnection({
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' }
+        ]
+      });
+      pc.onicecandidate = (e) => { if(e.candidate){ socket.emit("candidate", { to: remoteId, candidate: e.candidate }); } };
+      pc.ontrack = (ev) => {
+        elements.remoteVideo.srcObject = ev.streams[0];
+        showVideo();
+        updateStatus("Viewing shared screen", 'connected');
+      };
+      pc.onconnectionstatechange = () => {
+        if(['disconnected','failed'].includes(pc.connectionState)){ showVideoPlaceholder(); }
+      };
+      return pc;
+    }
+
+    // init
+    showVideoPlaceholder(); updateUsersList(); updateStatus("Not connected",'disconnected'); updateRoomBadge();
+  </script>
+</body>
+</html>
