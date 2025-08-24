@@ -9,13 +9,24 @@ const { Server } = require("socket.io");
 const app = express();
 const server = http.createServer(app);
 
-// --- Socket.IO setup (CORS open for dev; same-origin pe bhi chalega)
+// --- Socket.IO setup with better CORS and transport configuration
 const io = new Server(server, {
-  cors: { origin: "*", methods: ["GET", "POST"] }
+  cors: { 
+    origin: "*", 
+    methods: ["GET", "POST"],
+    credentials: true
+  },
+  transports: ['websocket', 'polling'],
+  allowEIO3: true
 });
 
 // --- Static files (serve index.html + assets from public folder)
 app.use(express.static(path.join(__dirname, "view")));
+
+// Health check endpoint for deployment platforms
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
+});
 
 // ---------------------------------------------
 // In-memory room state
@@ -52,6 +63,7 @@ function clearSharer(roomId) {
 // ---------------------------------------------
 // Socket events
 io.on("connection", (socket) => {
+  console.log(`User connected: ${socket.id}`);
   socket.data.roomId = null;
   socket.data.name = null;
 
@@ -68,6 +80,8 @@ io.on("connection", (socket) => {
       name: socket.data.name,
       isSharing: false
     });
+
+    console.log(`User ${socket.id} joined room ${roomId} as ${userName}`);
 
     socket.emit("room-joined", { users: usersArray(room) });
 
@@ -89,6 +103,7 @@ io.on("connection", (socket) => {
       return;
     }
 
+    console.log(`Screen request from ${socket.id} in room ${roomId}`);
     socket.to(roomId).emit("screen-request", { from: socket.id });
   });
 
@@ -99,6 +114,7 @@ io.on("connection", (socket) => {
     const room = rooms.get(roomId);
     if (!room) return;
 
+    console.log(`Screen response: ${accept ? 'accepted' : 'rejected'} from ${socket.id} to ${to}`);
     io.to(to).emit("screen-response", { accept: !!accept });
 
     if (accept) {
@@ -112,22 +128,27 @@ io.on("connection", (socket) => {
       }
       broadcastUsers(roomId);
     }
-    
   });
-
 
   socket.on("offer", ({ to, sdp }) => {
-    if (to && sdp) io.to(to).emit("offer", { from: socket.id, sdp });
+    if (to && sdp) {
+      console.log(`Relaying offer from ${socket.id} to ${to}`);
+      io.to(to).emit("offer", { from: socket.id, sdp });
+    }
   });
 
-
-  
   socket.on("answer", ({ to, sdp }) => {
-    if (to && sdp) io.to(to).emit("answer", { from: socket.id, sdp });
+    if (to && sdp) {
+      console.log(`Relaying answer from ${socket.id} to ${to}`);
+      io.to(to).emit("answer", { from: socket.id, sdp });
+    }
   });
 
   socket.on("candidate", ({ to, candidate }) => {
-    if (to && candidate) io.to(to).emit("candidate", { from: socket.id, candidate });
+    if (to && candidate) {
+      console.log(`Relaying ICE candidate from ${socket.id} to ${to}`);
+      io.to(to).emit("candidate", { from: socket.id, candidate });
+    }
   });
 
   socket.on("stop-sharing", (roomId) => {
@@ -135,6 +156,7 @@ io.on("connection", (socket) => {
     if (!room) return;
 
     if (room.sharerId === socket.id) {
+      console.log(`User ${socket.id} stopped sharing in room ${roomId}`);
       clearSharer(roomId);
       io.to(roomId).emit("stopped");
       broadcastUsers(roomId);
@@ -143,6 +165,8 @@ io.on("connection", (socket) => {
 
   socket.on("disconnect", () => {
     const roomId = socket.data.roomId;
+    console.log(`User ${socket.id} disconnected from room ${roomId || 'none'}`);
+    
     if (!roomId) return;
 
     const room = rooms.get(roomId);
@@ -159,8 +183,14 @@ io.on("connection", (socket) => {
     broadcastUsers(roomId);
 
     if (room.users.size === 0) {
+      console.log(`Room ${roomId} is empty, deleting...`);
       rooms.delete(roomId);
     }
+  });
+
+  // Handle connection errors
+  socket.on("error", (error) => {
+    console.error(`Socket error for ${socket.id}:`, error);
   });
 });
 
@@ -168,4 +198,5 @@ io.on("connection", (socket) => {
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
 });

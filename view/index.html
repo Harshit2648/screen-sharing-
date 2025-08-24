@@ -7,7 +7,11 @@
   <title>ShareScreen — Meet Style</title>
   <script src="/socket.io/socket.io.js"></script>
 <script>
-  const socket = io(); // agar same server se serve ho rahi hai file
+  const socket = io({
+    transports: ['websocket', 'polling'],
+    upgrade: true,
+    rememberUpgrade: true
+  });
 </script>
 
   <style>
@@ -123,7 +127,7 @@
     .status-sharing{ background: var(--warn); animation: pulse 2s infinite; }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
 
-    /* Meet-like in-page “fullscreen” (stage expands, right panel hides) */
+    /* Meet-like in-page "fullscreen" (stage expands, right panel hides) */
     .stage-full {
       grid-column: 1 / -1;
     }
@@ -148,6 +152,20 @@
     video::-webkit-media-controls,
     video::-webkit-media-controls-enclosure,
     video::-webkit-media-controls-panel { display:none !important; }
+
+    .debug-info {
+      position: fixed;
+      bottom: 10px;
+      left: 10px;
+      background: rgba(0,0,0,0.8);
+      color: #fff;
+      padding: 8px;
+      font-size: 12px;
+      border-radius: 4px;
+      max-width: 300px;
+      z-index: 1000;
+      display: none;
+    }
   </style>
 </head>
 
@@ -214,6 +232,9 @@
     </aside>
   </div>
 
+  <!-- Debug Info -->
+  <div class="debug-info" id="debugInfo"></div>
+
   <!-- Popup -->
   <div id="popup-backdrop"></div>
   <div id="popup">
@@ -227,21 +248,31 @@
   </div>
 
   <script>
-  
+    // Debug logging function
+    function debugLog(message) {
+      console.log(`[Debug] ${message}`);
+      const debugDiv = document.getElementById('debugInfo');
+      if (debugDiv) {
+        debugDiv.innerHTML += `<div>${new Date().toLocaleTimeString()}: ${message}</div>`;
+        debugDiv.scrollTop = debugDiv.scrollHeight;
+      }
+    }
 
+    // Show debug info on double click (for testing)
+    document.addEventListener('dblclick', () => {
+      const debugDiv = document.getElementById('debugInfo');
+      debugDiv.style.display = debugDiv.style.display === 'none' ? 'block' : 'none';
+    });
 
+    document.getElementById("leaveFake").addEventListener("click",()=>{
+      window.location.reload()
+    })
 
- document.getElementById("leaveFake").addEventListener("click",()=>{
-    window.location.reload()
-   
-  })
-
-   document.addEventListener("keydown", function(event) {
+    document.addEventListener("keydown", function(event) {
       if (event.key === "Escape") {
         fullscreenBtn.click()
       }
     });
-
 
     let localStream, peerConnection, roomId, viewerId, userName;
     let isSharingActive = false;
@@ -281,6 +312,7 @@
     }
     function updateStatus(message, type='info'){
       elements.statusMessage.textContent = message;
+      debugLog(`Status: ${message}`);
       if(type==='connected'||type==='connecting'||type==='disconnected') setConnState(type);
     }
     function updateRoomBadge(){
@@ -328,6 +360,7 @@
       socket.emit("join-room", { roomId, userName });
       updateStatus("Connecting to room...", 'connecting');
       updateRoomBadge();
+      debugLog(`Joining room: ${roomId} as ${userName}`);
     };
 
     // Request screen
@@ -336,6 +369,7 @@
       if(isSharingActive){ alert("Someone is already sharing. Please wait."); return; }
       socket.emit("request-screen", roomId);
       updateStatus("Requesting screen share...", 'connecting');
+      debugLog("Requesting screen share");
     };
 
     // Accept/Reject
@@ -344,33 +378,82 @@
       socket.emit("screen-response", { to: viewerId, accept: true });
       isSharingActive = true;
       elements.stopBtn.style.display = "inline-flex";
+      
+      debugLog("Accepted screen share request, starting capture...");
+      
       try{
+        // Enhanced screen capture options
         localStream = await navigator.mediaDevices.getDisplayMedia({
-          video: { mediaSource: 'screen' }, audio: true
+          video: { 
+            mediaSource: 'screen',
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 30 }
+          }, 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: false
+          }
         });
+        
+        debugLog("Screen capture started successfully");
+        
         peerConnection = createPeerConnection(viewerId);
-        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+        localStream.getTracks().forEach(track => {
+          debugLog(`Adding track: ${track.kind} - ${track.label}`);
+          peerConnection.addTrack(track, localStream);
+        });
 
-        const offer = await peerConnection.createOffer();
+        const offer = await peerConnection.createOffer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: true
+        });
         await peerConnection.setLocalDescription(offer);
         socket.emit("offer", { to: viewerId, sdp: offer });
 
         updateStatus("Sharing your screen", 'connected');
+        debugLog("WebRTC offer sent");
 
-        localStream.getVideoTracks()[0].addEventListener('ended', () => { stopSharing(); });
-      }catch(err){
-        console.error(err);
-        alert("Failed to start screen sharing.");
+        // Handle stream ending
+        localStream.getVideoTracks()[0].addEventListener('ended', () => { 
+          debugLog("Screen capture ended by user");
+          stopSharing(); 
+        });
+        
+      } catch(err) {
+        console.error("Screen sharing error:", err);
+        debugLog(`Screen sharing failed: ${err.message}`);
+        alert(`Failed to start screen sharing: ${err.message}`);
         isSharingActive = false;
         elements.stopBtn.style.display = "none";
       }
     };
-    elements.rejectBtn.onclick = () => { hidePopup(); socket.emit("screen-response", { to: viewerId, accept: false }); };
-    elements.stopBtn.onclick = () => { stopSharing(); };
+    
+    elements.rejectBtn.onclick = () => { 
+      hidePopup(); 
+      socket.emit("screen-response", { to: viewerId, accept: false }); 
+      debugLog("Rejected screen share request");
+    };
+    
+    elements.stopBtn.onclick = () => { 
+      debugLog("Stop button clicked");
+      stopSharing(); 
+    };
 
     function stopSharing(){
-      if(localStream){ localStream.getTracks().forEach(t=>t.stop()); localStream=null; }
-      if(peerConnection){ peerConnection.close(); peerConnection=null; }
+      if(localStream){ 
+        localStream.getTracks().forEach(t => {
+          t.stop();
+          debugLog(`Stopped track: ${t.kind}`);
+        }); 
+        localStream = null; 
+      }
+      if(peerConnection){ 
+        peerConnection.close(); 
+        peerConnection = null; 
+        debugLog("Peer connection closed");
+      }
       elements.stopBtn.style.display="none";
       isSharingActive=false;
       if(roomId) socket.emit("stop-sharing", roomId);
@@ -406,83 +489,241 @@
 
     // Fake details (opens a small alert with current inputs)
     elements.openSettingsBtn.onclick = () => {
-      alert(`Room: ${elements.roomIdInput.value || '—'}\nName: ${elements.userNameInput.value || '—'}`);
+      const isSecure = location.protocol === 'https:';
+      const hasGetDisplayMedia = !!navigator.mediaDevices?.getDisplayMedia;
+      alert(`Room: ${elements.roomIdInput.value || '—'}\nName: ${elements.userNameInput.value || '—'}\nSecure Context: ${isSecure}\nScreen Capture Support: ${hasGetDisplayMedia}`);
     };
 
-    // Sockets
+    // Socket event handlers
+    socket.on("connect", () => {
+      debugLog("Socket connected");
+      updateStatus("Connected to server", 'connected');
+    });
+
+    socket.on("disconnect", (reason) => {
+      debugLog(`Socket disconnected: ${reason}`);
+      updateStatus("Disconnected from server", 'disconnected');
+      connectedUsers.clear(); 
+      updateUsersList(); 
+      showVideoPlaceholder(); 
+      updateRoomBadge();
+    });
+
     socket.on("room-joined", (data) => {
       updateStatus(`Connected to room: ${roomId}`, 'connected');
       connectedUsers.clear();
       if(data.users){ data.users.forEach(u => connectedUsers.set(u.id,u)); }
-      updateUsersList(); updateRoomBadge();
+      updateUsersList(); 
+      updateRoomBadge();
+      debugLog(`Joined room with ${data.users?.length || 0} users`);
     });
-    socket.on("user-joined", (user) => { connectedUsers.set(user.id,user); updateUsersList(); });
-    socket.on("user-left", (id) => { connectedUsers.delete(id); updateUsersList(); });
-    socket.on("users-update", (users) => { connectedUsers.clear(); users.forEach(u=>connectedUsers.set(u.id,u)); updateUsersList(); });
+
+    socket.on("user-joined", (user) => { 
+      connectedUsers.set(user.id,user); 
+      updateUsersList(); 
+      debugLog(`User joined: ${user.name}`);
+    });
+
+    socket.on("user-left", (id) => { 
+      connectedUsers.delete(id); 
+      updateUsersList(); 
+      debugLog(`User left: ${id}`);
+    });
+
+    socket.on("users-update", (users) => { 
+      connectedUsers.clear(); 
+      users.forEach(u=>connectedUsers.set(u.id,u)); 
+      updateUsersList(); 
+    });
 
     socket.on("screen-request", (data) => {
       viewerId = data.from;
       const name = connectedUsers.get(data.from)?.name || 'Someone';
       elements.popupMessage.textContent = `${name} wants to view your screen`;
       showPopup();
+      debugLog(`Screen request from: ${name}`);
     });
+
     socket.on("screen-response", (data) => {
       if(!data.accept){
         alert("Screen share request was declined.");
         updateStatus(roomId?`Connected to room: ${roomId}`:'Connected','connected');
+        debugLog("Screen request was declined");
       }else{
         updateStatus("Screen share accepted. Connecting...", 'connecting');
         isSharingActive = true;
+        debugLog("Screen request accepted");
       }
     });
 
     socket.on("offer", async (data) => {
-      peerConnection = createPeerConnection(data.from);
-      await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
-      const answer = await peerConnection.createAnswer();
-      await peerConnection.setLocalDescription(answer);
-      socket.emit("answer", { to: data.from, sdp: answer });
-    });
-    socket.on("answer", async (data) => {
-      await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
-      updateStatus("Screen sharing active", 'connected');
-    });
-    socket.on("candidate", async (data) => {
-      if(peerConnection && peerConnection.remoteDescription){
-        try{ await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate)); }catch(e){ console.error(e); }
+      debugLog(`Received offer from ${data.from}`);
+      try {
+        peerConnection = createPeerConnection(data.from);
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+        socket.emit("answer", { to: data.from, sdp: answer });
+        debugLog("Sent answer");
+      } catch (error) {
+        console.error("Error handling offer:", error);
+        debugLog(`Error handling offer: ${error.message}`);
       }
     });
+
+    socket.on("answer", async (data) => {
+      debugLog(`Received answer from ${data.from}`);
+      try {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+        updateStatus("Screen sharing active", 'connected');
+        debugLog("WebRTC connection established");
+      } catch (error) {
+        console.error("Error handling answer:", error);
+        debugLog(`Error handling answer: ${error.message}`);
+      }
+    });
+
+    socket.on("candidate", async (data) => {
+      if(peerConnection && peerConnection.remoteDescription){
+        try{ 
+          await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate)); 
+          debugLog("Added ICE candidate");
+        } catch(e) { 
+          console.error("Error adding ICE candidate:", e); 
+          debugLog(`Error adding ICE candidate: ${e.message}`);
+        }
+      }
+    });
+
     socket.on("stopped", () => {
       showVideoPlaceholder();
       updateStatus(roomId?`Connected to room: ${roomId}`:'Connected','connected');
       isSharingActive=false;
-    });
-    socket.on("disconnect", () => {
-      updateStatus("Disconnected from server", 'disconnected');
-      connectedUsers.clear(); updateUsersList(); showVideoPlaceholder(); updateRoomBadge();
+      debugLog("Screen sharing stopped");
     });
 
+    // Enhanced WebRTC peer connection with better STUN/TURN servers
     function createPeerConnection(remoteId){
-      const pc = new RTCPeerConnection({
+      const config = {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' }
-        ]
-      });
-      pc.onicecandidate = (e) => { if(e.candidate){ socket.emit("candidate", { to: remoteId, candidate: e.candidate }); } };
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' },
+          { urls: 'stun:stun3.l.google.com:19302' },
+          { urls: 'stun:stun4.l.google.com:19302' },
+          // Additional STUN servers for better connectivity
+          { urls: 'stun:stun.services.mozilla.com' },
+          { urls: 'stun:stun.stunprotocol.org:3478' },
+          // Free TURN servers (you should replace these with your own for production)
+          {
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+            username: 'openrelayproject', 
+            credential: 'openrelayproject'
+          }
+        ],
+        iceCandidatePoolSize: 10
+      };
+
+      const pc = new RTCPeerConnection(config);
+      
+      pc.onicecandidate = (e) => { 
+        if(e.candidate){ 
+          socket.emit("candidate", { to: remoteId, candidate: e.candidate });
+          debugLog(`Sent ICE candidate: ${e.candidate.type}`);
+        } else {
+          debugLog("ICE gathering completed");
+        }
+      };
+
       pc.ontrack = (ev) => {
+        debugLog(`Received remote track: ${ev.track.kind}`);
         elements.remoteVideo.srcObject = ev.streams[0];
         showVideo();
         updateStatus("Viewing shared screen", 'connected');
+        
+        // Handle stream events
+        ev.streams[0].onaddtrack = (e) => debugLog(`Track added: ${e.track.kind}`);
+        ev.streams[0].onremovetrack = (e) => debugLog(`Track removed: ${e.track.kind}`);
       };
+
       pc.onconnectionstatechange = () => {
-        if(['disconnected','failed'].includes(pc.connectionState)){ showVideoPlaceholder(); }
+        const state = pc.connectionState;
+        debugLog(`Peer connection state: ${state}`);
+        
+        if(['disconnected','failed'].includes(state)){ 
+          showVideoPlaceholder(); 
+          updateStatus("Connection lost", 'disconnected');
+        } else if (state === 'connected') {
+          updateStatus("Screen sharing connected", 'connected');
+        } else if (state === 'connecting') {
+          updateStatus("Connecting...", 'connecting');
+        }
       };
+
+      pc.oniceconnectionstatechange = () => {
+        debugLog(`ICE connection state: ${pc.iceConnectionState}`);
+      };
+
+      pc.onicegatheringstatechange = () => {
+        debugLog(`ICE gathering state: ${pc.iceGatheringState}`);
+      };
+
+      pc.onsignalingstatechange = () => {
+        debugLog(`Signaling state: ${pc.signalingState}`);
+      };
+
       return pc;
     }
 
-    // init
-    showVideoPlaceholder(); updateUsersList(); updateStatus("Not connected",'disconnected'); updateRoomBadge();
+    // Check for secure context and screen sharing support
+    function checkBrowserSupport() {
+      const isSecure = location.protocol === 'https:' || location.hostname === 'localhost';
+      const hasGetDisplayMedia = !!navigator.mediaDevices?.getDisplayMedia;
+      
+      if (!isSecure) {
+        debugLog("WARNING: Not running in secure context (HTTPS required for screen sharing)");
+        updateStatus("HTTPS required for screen sharing", 'disconnected');
+      }
+      
+      if (!hasGetDisplayMedia) {
+        debugLog("ERROR: Browser does not support screen sharing");
+        updateStatus("Browser not supported", 'disconnected');
+        elements.requestBtn.disabled = true;
+        elements.acceptBtn.disabled = true;
+      } else {
+        debugLog("Browser supports screen sharing");
+      }
+      
+      return isSecure && hasGetDisplayMedia;
+    }
+
+    // Initialize
+    function init() {
+      showVideoPlaceholder(); 
+      updateUsersList(); 
+      updateStatus("Not connected",'disconnected'); 
+      updateRoomBadge();
+      
+      const supported = checkBrowserSupport();
+      if (!supported) {
+        debugLog("Screen sharing not supported in this environment");
+      }
+      
+      debugLog("App initialized");
+    }
+
+    // Start the app
+    init();
   </script>
 </body>
 </html>
