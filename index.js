@@ -15,7 +15,7 @@ const io = new Server(server, {
 });
 
 // --- Static files (serve index.html + assets from public folder)
-app.use(express.static(path.join(__dirname, "public")));
+app.use(express.static(path.join(__dirname, "view"))); 
 
 // ---------------------------------------------
 // In-memory room state
