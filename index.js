@@ -21,12 +21,18 @@ const io = new Server(server, {
 });
 
 // --- Static files (serve index.html + assets from public folder)
-app.use(express.static(path.join(__dirname, "view")));
+// app.use(express.static(path.join(__dirname, "view")));
 
 // Health check endpoint for deployment platforms
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
 });
+
+app.get('/', (req, res) => {
+  res.status(200).json({ status: 'OK', message: "Sercer is running " });
+});
+
+
 
 // ---------------------------------------------
 // In-memory room state
