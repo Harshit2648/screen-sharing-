@@ -9,25 +9,13 @@ const { Server } = require("socket.io");
 const app = express();
 const server = http.createServer(app);
 
-
-
-app.use((req, res, next) => {
-  // res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
-  // res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
-  next();
-});
-
-
-
-
-
 // --- Socket.IO setup (CORS open for dev; same-origin pe bhi chalega)
 const io = new Server(server, {
   cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
 // --- Static files (serve index.html + assets from public folder)
-app.use(express.static(path.join(__dirname, "view"))); 
+app.use(express.static(path.join(__dirname, "public")));
 
 // ---------------------------------------------
 // In-memory room state
