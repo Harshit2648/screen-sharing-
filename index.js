@@ -12,7 +12,7 @@ const server = http.createServer(app);
 // --- Socket.IO setup with better CORS and transport configuration
 const io = new Server(server, {
   cors: {
-    origin: "https://screenshare-frontend.vercel.app/",
+    origin: "*",
     methods: ["GET", "POST"],
     credentials: true
   },
