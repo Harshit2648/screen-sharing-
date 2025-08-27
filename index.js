@@ -11,8 +11,8 @@ const server = http.createServer(app);
 
 // --- Socket.IO setup with better CORS and transport configuration
 const io = new Server(server, {
-  cors: { 
-    origin: "*", 
+  cors: {
+    origin: "*",
     methods: ["GET", "POST"],
     credentials: true
   },
@@ -29,7 +29,7 @@ app.get('/health', (req, res) => {
 });
 
 app.get('/', (req, res) => {
-  res.status(200).json({ status: 'OK', message: "Sercer is running " });
+  res.sendFile(path.join(__dirname, "view", "index.html"))
 });
 
 
@@ -100,7 +100,7 @@ io.on("connection", (socket) => {
     broadcastUsers(roomId);
   });
 
-  socket.on("request-screen", (roomId) => {
+  socket.on("request-screen", ({ roomId, targetId }) => {
     const room = rooms.get(roomId);
     if (!room) return;
 
@@ -109,8 +109,8 @@ io.on("connection", (socket) => {
       return;
     }
 
-    console.log(`Screen request from ${socket.id} in room ${roomId}`);
-    socket.to(roomId).emit("screen-request", { from: socket.id });
+    console.log(`Screen request from ${socket.id} to ${targetId} in room ${roomId}`);
+    io.to(targetId).emit("screen-request", { from: socket.id });
   });
 
   socket.on("screen-response", (data) => {
@@ -172,7 +172,7 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {
     const roomId = socket.data.roomId;
     console.log(`User ${socket.id} disconnected from room ${roomId || 'none'}`);
-    
+
     if (!roomId) return;
 
     const room = rooms.get(roomId);
